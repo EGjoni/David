@@ -10,4 +10,4 @@ try:
     import accelerate
     efficiency_stuff['device_map'] = "auto"
 except:
-    warnings.warn("accelerate isn't installed, you're missing out on memory management gains")
+    warnings.warn("accelerate isn't installed, you may need to manually specify .to('cuda') on input_ids and model")

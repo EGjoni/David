@@ -2,9 +2,13 @@ import copy
 from math import ceil, floor
 import torch
 import torch.nn as nn
-class David:   
+import warnings
+class David:
+    orig_model = None
+    rev_layers = {}
+    first_call = True
     @classmethod
-    def sling(self, model, ratio_repeat=None, repeat_map_raw=None):
+    def sling(cls, model, ratio_repeat=None, repeat_map_raw=None):
         r"""
         ratio_repeat -- is a list of tuples, each tuple is expected to have two elements, one is the starting depth 
                         of a sequence of layers, and the other is an ending depth. 
@@ -17,23 +21,36 @@ class David:
                         would evaluate to a model that sends its values through the layers in the order
                         [0, 1, 2, 3,   2, 3, 4, 5,   3, 4, 5, 6]
                         If your first start value is greater than 0 and/or your end value is less than 1, the
-                        layers will automatically fill in to lead up from the first layer and end at the last layer. 
-                        
+                        layers will automatically fill in to lead up from the first layer and end at the last layer.               
         optionally, you can manually specify the layers to repeat as an ordered list by providing repeat_map_raw
         """
         return_model = model
         if hasattr(return_model, 'model'):
             model = return_model.model
+        
+        if cls.orig_model is not None and model is not cls.orig_model:
+            raise RuntimeError("""This library only handles one model at a time and furthermore is very unimpressed 
+                               with you trying to flaunt all your spare VRAM. Rude.""")
+        if cls.first_call is False: 
+            warnings.warn("Calling sling multiple times on the same model instance can cause memory leaks")
+        
+        cls.orig_model = model
+        orig_layers = cls._recover_or_set_orig_layers(model)
+        cls.rev_layers = {}
             
         if repeat_map_raw is None:
-            repeat_map_raw = David.generate_from_ratio_repeat(len(model.layers), ratio_repeat)
+            repeat_map_raw = David.generate_from_ratio_repeat(len(orig_layers), ratio_repeat)
         abstract_layers = []
         for i, v in enumerate(repeat_map_raw):
-            orig_layer = model.layers[v]           
+            orig_layer = orig_layers[v]
+            if f"{orig_layer.self_attn.layer_idx}" not in cls.rev_layers:
+                cls.rev_layers[f"{orig_layer.self_attn.layer_idx}"] = i
             copied_layer = clone_module(orig_layer)
             copied_layer.self_attn.layer_idx = i
             abstract_layers.append(copied_layer)
+        cls._cleanup(model)
         model.layers = nn.ModuleList(abstract_layers)
+        cls.first_call = False
         return return_model
     
     @classmethod
@@ -49,6 +66,29 @@ class David:
         first_elem = layers[0]
         layers = list(range(0, first_elem)) + layers
         return layers
+    
+    @classmethod
+    def _recover_or_set_orig_layers(cls, model):
+        if cls.first_call:
+            return model.layers
+        else:
+            result = nn.ModuleList([])
+            sorted_idx = sorted(cls.rev_layers.keys(), key=int)
+            for orig_idx in sorted_idx:
+                curr_layer = model.layers[int(cls.rev_layers[orig_idx])]
+                curr_layer.self_attn.layer_idx = int(orig_idx)
+                result.append(curr_layer)
+            return result
+    
+    @classmethod
+    def _cleanup(cls, model):
+        #The fact that I'm doing this isn't nearly as bad as the fact that it isn't even helping
+        for l in model.layers:
+            del l.self_attn
+            del l
+            torch.cuda.empty_cache()
+        del model.layers
+        torch.cuda.empty_cache()
         
 #Yeah it's hacky as hell, but in my defense, I have no defense, and it is wrong to attack a defenseless man.
 def clone_module(module):
