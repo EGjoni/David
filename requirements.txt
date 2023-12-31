@@ -1,0 +1,3 @@
+setuptools
+torch
+transformers>=4.35
