@@ -78,5 +78,5 @@ David.sling(model, repeat_map_raw=[0, 1, 2, 1, 2, 3, 2, 3, 4])
 ## Limitations
 
 - Handles one model at a time (because that's what a franken-merge is)
-- Multiple `sling()` calls might leak memory
+- `sling()` should only be called on the model once before using it for generation (especially if using kv-cache)
 - For inference only, not training
